@@ -2,7 +2,10 @@
 
 # Bus Display Driver
 
-use the LCM4ESP32 concept to run this
+use the LCM4ESP32 concept to run this  
+Details on https://github.com/HomeACcessoryKid/LCM4ESP32  
+and instructions how to deploy here  
+https://github.com/HomeACcessoryKid/LCM4ESP32/blob/main/deploy.md  
 
 under developement so don't expect stability or anything
 
