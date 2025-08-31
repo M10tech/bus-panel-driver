@@ -1,0 +1,22 @@
+(c) 2025 M10tech
+
+# Bus Display Driver
+
+use the LCM4ESP32 concept to run this
+
+under developement so don't expect stability or anything
+
+## Version History
+
+### Initial commit
+
+### 0.0.1 "proof of concept"
+- can replicate some basic commands
+
+### 0.0.2 moved to UART driver, not I2S
+- turns out to be sufficient for this purpose
+- copy from Quatt-Modbus repository
+- reuse the setup for UART to do TX
+- adjust for busdisplay 600-8E1
+- add checksum function
+- inherits LCM4ESP32, UDPlogger, pinger, SNTP

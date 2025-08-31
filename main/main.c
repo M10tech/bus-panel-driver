@@ -1,81 +1,162 @@
+/* (c) 2025 M10tech
+ * busdisplaydriver for ESP32
+ */
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
-#include "driver/i2s_std.h"
+#include "nvs_flash.h"
+#include "nvs.h"
+#include "esp_wifi.h"
+#include "esp_netif_sntp.h"
+// #include "lcm_api.h"
+#include <udplogger.h>
+#include "driver/uart.h"
+#include "soc/uart_reg.h"
+#include "ping/ping_sock.h"
+#include "hal/wdt_hal.h"
 
-static i2s_chan_handle_t   tx_chan;    //I2S tx channel handlers
-#define MAXBYTES 64 //longest frame in bytes (might be more, TBD)
-#define N 10 //amount of uint32_t needed for one serial bit
-#define BUFF_SIZE   MAXBYTES*11*N //units of uint32 with 11 bits per serial-byte-transmission 8E1
-#define ONE  0xFFFFFFFF
-#define ZERO 0x00000000
-#define SETMARK(i)   do {for (int j=0; j<N; j++) dma_buf[i*N+j]=ONE; \
-                        even++;} while(0)
-#define SETSPACE(i)  do {for (int j=0; j<N; j++) dma_buf[i*N+j]=ZERO; \
-                        } while(0)
-void send_frame(uint8_t *payload, int len) {
-    if (len>MAXBYTES) {printf("frame too long\n"); return;}
-    int even,byte,bit=0; //bit keeps track of bit-representation in dma_buf over an entire frame
-    size_t bytes_loaded;
-    uint32_t dma_buf[BUFF_SIZE]={0};
-    
-    for (byte=0 ; byte<len ; byte++) { //iterate bytes
-        printf("S--0x%02x--ps ",payload[byte]);
-        even=0; //https://en.wikipedia.org/wiki/RS-232 for details
-        SETMARK(bit); bit++; //start bit
-        for (int i=0; i<8; i++) { //iterate payload byte bits
-            if (payload[byte]&(1<<i)) SETSPACE(bit); else SETMARK(bit);
-            bit++;
-        }
-        if (even%2) SETMARK(bit); else SETSPACE(bit); bit++;//parity bit
-        SETSPACE(bit); bit++; //stop bit
-    }
-    printf("\n");
-    for (int i=0; i<bit; i++) printf("%d%s",dma_buf[i*N]?1:0,i%11==10?" ":"");
-    //transmit the dma_buf once
-    if (i2s_channel_preload_data(tx_chan, dma_buf, BUFF_SIZE, &bytes_loaded)!=ESP_OK) printf("i2s_channel_preload_data failed\n");
-    printf("%d bytes preloaded\n",bytes_loaded);
-    if (i2s_channel_enable(tx_chan)!=ESP_OK) printf("i2s_channel_enable failed\n"); //Enable the TX channel
-    vTaskDelay(30*len/portTICK_PERIOD_MS); //each byte-transmission is 18.33 ms, message is len*18.33 ms but somehow need a bit more
-    if (i2s_channel_disable(tx_chan)!=ESP_OK) printf("i2s_channel_disable failed\n"); //Disable the TX channel
+// You must set version.txt file to match github version tag x.y.z for LCM4ESP32 to work
+
+char    *pinger_target=NULL;
+
+uint8_t checksum(uint8_t *payload, size_t len) {
+    uint8_t cs=0;
+    for(int i = 0; i < len; i++) cs ^= payload[i];
+    return cs;
 }
 
+wdt_hal_context_t rtc_wdt_ctx = RWDT_HAL_CONTEXT_DEFAULT(); //RTC WatchDogTimer context
+int ping_count=60,ping_delay=1; //seconds
+static void ping_success(esp_ping_handle_t hdl, void *args) {
+    ping_count+=20;
+    if (ping_count>120) ping_count=120;
+    //uint32_t elapsed_time;
+    //ip_addr_t response_addr;
+    //esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed_time, sizeof(elapsed_time));
+    //esp_ping_get_profile(hdl, ESP_PING_PROF_IPADDR,  &response_addr,  sizeof(response_addr));
+    //UDPLUS("good ping from %s %lu ms -> count: %d s\n", inet_ntoa(response_addr.u_addr.ip4), elapsed_time, ping_count);
+    //feed the RTC WatchDog
+    wdt_hal_write_protect_disable(&rtc_wdt_ctx);
+    wdt_hal_feed(&rtc_wdt_ctx);
+    wdt_hal_write_protect_enable(&rtc_wdt_ctx);
+}
+static void ping_timeout(esp_ping_handle_t hdl, void *args) {
+    //ping_count--; ping_delay=1;
+    //UDPLUS("failed ping -> count: %d s\n", ping_count);
+    //feed the RTC WatchDog ANYHOW, until the code is changed to ping the default gateway automatically
+    wdt_hal_write_protect_disable(&rtc_wdt_ctx);
+    wdt_hal_feed(&rtc_wdt_ctx);
+    wdt_hal_write_protect_enable(&rtc_wdt_ctx);
+}
+void ping_task(void *argv) {
+    ip_addr_t target_addr;
+    ipaddr_aton(pinger_target,&target_addr);
+    esp_ping_handle_t ping;
+    esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
+    ping_config.target_addr = target_addr;
+    ping_config.timeout_ms = 900; //should time-out before our 1s delay
+    ping_config.count = 1; //one ping at a time means we can regulate the interval at will
+    esp_ping_callbacks_t cbs = {.on_ping_success=ping_success, .on_ping_timeout=ping_timeout, .on_ping_end=NULL, .cb_args=NULL}; //set callback functions
+    esp_ping_new_session(&ping_config, &cbs, &ping);
+    
+    UDPLUS("Pinging IP %s\n", ipaddr_ntoa(&target_addr));
+    //re-enable RTC WatchDogTimer (don't depend on bootloader to not disable it)
+    wdt_hal_write_protect_disable(&rtc_wdt_ctx);
+    wdt_hal_enable(&rtc_wdt_ctx);
+    wdt_hal_write_protect_enable(&rtc_wdt_ctx);    
+    while(ping_count){
+        vTaskDelay((ping_delay-1)*(1000/portTICK_PERIOD_MS)); //already waited 1 second...
+        esp_ping_start(ping);
+        vTaskDelay(1000/portTICK_PERIOD_MS); //waiting for answer or timeout to update ping_delay value
+    }
+    UDPLUS("restarting because can't ping home-hub\n");
+    vTaskDelay(1000/portTICK_PERIOD_MS); //allow UDPlog to flush output
+    esp_restart(); //TODO: disable GPIO outputs
+}
 
-void send_init() { //note that idle voltage is zero and cannot be flipped
-    i2s_chan_info_t tx_chan_info;
-    i2s_chan_config_t tx_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-    i2s_std_config_t tx_std_cfg = {
-        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(3000), // min value higher than 2000 so use 3000, not 1500
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {.mclk=I2S_GPIO_UNUSED, .bclk=I2S_GPIO_UNUSED, .ws=I2S_GPIO_UNUSED, .din=I2S_GPIO_UNUSED, },
-    };
-    if (i2s_new_channel(&tx_chan_cfg, &tx_chan, NULL)!=ESP_OK) printf("i2s_new_channel failed\n"); //no Rx
-    tx_std_cfg.gpio_cfg.dout=GPIO_NUM_13; //closest to +5V pin on ESP32 board so can use 6 pin header
-    if (i2s_channel_init_std_mode(tx_chan, &tx_std_cfg)!=ESP_OK) printf("i2s_channel_init_std_mode failed\n");
-    i2s_channel_get_info(tx_chan, &tx_chan_info);
-    printf("dma_buff_size assigned=%ld\n",tx_chan_info.total_dma_buf_size);
+void time_task(void *argv) {
+    setenv("TZ", "CET-1CEST,M3.5.0/2,M10.5.0/3", 1); tzset();
+    esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    esp_netif_sntp_init(&config);
+    while (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000)) != ESP_OK) {
+        UDPLUS("Still waiting for system time to sync\n");
+    }
+    time_t ts = time(NULL);
+    UDPLUS("TIME SET: %u=%s\n", (unsigned int) ts, ctime(&ts));
+    vTaskDelete(NULL);
 }
 
 void main_task(void *arg) {
-    uint8_t payloadC[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x3f};
-    uint8_t payload2[]={0x02,0x05,0x22,0x33,0x56,0x0d,0x32,0x0d,0x02,0x03,0x73};
-    uint8_t payload7[]={0x02,0x05,0x22,0x33,0x56,0x0d,0x37,0x0d,0x02,0x03,0x76};
-    printf("buff_size=%d\n", BUFF_SIZE);
-    send_init();
-    vTaskDelay(100);
-    send_frame(payloadC,sizeof(payloadC)); //test start cyclic pattern
-    while (1) {
-        vTaskDelay(400);
-        send_frame(payload2,sizeof(payload2)); //level 2
-        vTaskDelay(400);
-        send_frame(payload7,sizeof(payload7)); //level 7
+    udplog_init(3);
+    vTaskDelay(300); //Allow Wi-Fi to connect
+    UDPLUS("\n\nBus-Panel-Driver\n");
+    const uart_port_t uart_num = UART_NUM_1;
+    const int uart_buffer_size = (1024 * 2);        // RX               TX
+    ESP_ERROR_CHECK(uart_driver_install(uart_num, uart_buffer_size, uart_buffer_size, 20, NULL, 0));
+    uart_config_t uart_config = {
+        .baud_rate = 600,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_EVEN,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .rx_flow_ctrl_thresh = 122,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config)); // Configure UART parameters
+    uart_intr_config_t uart_intr = {
+        .intr_enable_mask = UART_RXFIFO_FULL_INT_ENA_M | UART_RXFIFO_TOUT_INT_ENA_M, //?? |UART_INTR_RXFIFO_TOUT,
+        .rxfifo_full_thresh = 255,
+        .rx_timeout_thresh = 3,
+    };
+    ESP_ERROR_CHECK(uart_intr_config(uart_num, &uart_intr));
+    ESP_ERROR_CHECK(uart_enable_rx_intr(uart_num)); // Enable UART RX FIFO full threshold and timeout interrupts
+                                        // TX  RX  RTS   CTS
+    ESP_ERROR_CHECK(uart_set_pin(uart_num, 13, 14, 12, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_mode(uart_num,UART_MODE_RS485_HALF_DUPLEX));
+    xTaskCreate(time_task,"Time", 2048, NULL, 6, NULL);
+    pinger_target="192.168.178.5";
+    xTaskCreate(ping_task,"PingT",2048, NULL, 1, NULL);
+
+    uint8_t payloadC[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00};
+    payloadC[sizeof(payloadC)-1]=checksum(payloadC,sizeof(payloadC)-1);
+    while (true) {
+        uart_write_bytes(uart_num,payloadC,sizeof(payloadC));
+        UDPLUS("tick\n");
+        vTaskDelay(1000); 
     }
-}
+}    
 
 void app_main(void) {
-    xTaskCreatePinnedToCore(main_task,"main",65536,NULL,1,NULL,0); //make a huge stack, else issue with memory
+    printf("app_main-start\n");
+
+    //The code in this function would be the setup for any app that uses wifi which is set by LCM
+    //It is all boilerplate code that is also used in common_example code
+    esp_err_t err = nvs_flash_init(); // Initialize NVS
+    if (err==ESP_ERR_NVS_NO_FREE_PAGES || err==ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase()); //NVS partition truncated and must be erased
+        err = nvs_flash_init(); //Retry nvs_flash_init
+    } ESP_ERROR_CHECK( err );
+
+    //TODO: if no wifi setting found, trigger otamain
+    
+    //block that gets you WIFI with the lowest amount of effort, and based on FLASH
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    esp_netif_inherent_config_t esp_netif_config = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
+    esp_netif_config.route_prio = 128;
+    esp_netif_create_wifi(WIFI_IF_STA, &esp_netif_config);
+    esp_wifi_set_default_wifi_sta_handlers();
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_connect());
+    //end of boilerplate code
+
+    xTaskCreate(main_task,"main",4096,NULL,1,NULL);
     while (true) {
         vTaskDelay(1000); 
     }
+    printf("app_main-done\n"); //will never exit here
 }
