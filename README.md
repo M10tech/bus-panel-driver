@@ -23,3 +23,8 @@ under developement so don't expect stability or anything
 - adjust for busdisplay 600-8E1
 - add checksum function
 - inherits LCM4ESP32, UDPlogger, pinger, SNTP
+
+### 0.0.3 introduce MQTT subscriber
+- topic bus_panel/message
+- broker via CLI
+
