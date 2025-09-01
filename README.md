@@ -32,3 +32,6 @@ under developement so don't expect stability or anything
 - sets mqtt-uri
 - and ping_target
 - and target display
+
+### 0.0.5 allow cli number input
+- push this to a display message

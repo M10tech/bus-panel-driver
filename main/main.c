@@ -250,12 +250,36 @@ void main_task(void *arg) {
     xTaskCreate(time_task,"Time", 2048, NULL, 6, NULL);
     xTaskCreate(ping_task,"PingT",2048, NULL, 1, NULL);
 
-    uint8_t payloadC[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00};
-    payloadC[sizeof(payloadC)-1]=checksum(payloadC,sizeof(payloadC)-1);
+    uint8_t payload_random_test[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00};
+    payload_random_test[sizeof(payload_random_test)-1]=checksum(payload_random_test,sizeof(payload_random_test)-1);
+    uart_write_bytes(uart_num,payload_random_test,sizeof(payload_random_test));
+    uint8_t payload[32]={0x02,0x05,0x00,0x33,0x31,0x0d,0x58,0x00};
+    char line[128];
     while (true) {
-        uart_write_bytes(uart_num,payloadC,sizeof(payloadC));
-        UDPLUS("tick\n");
-        vTaskDelay(1000); 
+        int count = 0; line[127]='\0';
+        UDPLUS("Please enter message: \n");
+        while (count < 128) {
+            int c = fgetc(stdin);
+            if (c == '\n') {
+                line[count] = '\0';
+                break;
+            } else if (c > 0 && c < 127) {
+                line[count] = c;
+                ++count;
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        int length=count;
+        UDPLUS("Message: %s is %d long\n", line, length);
+        payload[2]=strlen(line)+0x20+2;
+        for (int i=0; i<length; i++) {
+            payload[7+i]=line[i];
+        }
+        payload[7+length]=0x0d; payload[8+length]=0x02; payload[9+length]=0x03;
+        payload[10+length]=checksum(payload,10+length);
+        for (int i=0; i<32; i++) UDPLUS("%02x ",payload[i]);
+        UDPLUS("\n");
+        uart_write_bytes(uart_num,payload,11+length);
     }
 }    
 
