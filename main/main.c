@@ -16,8 +16,11 @@
 #include "ping/ping_sock.h"
 #include "hal/wdt_hal.h"
 #include "mqtt_client.h"
+#include "esp_ota_ops.h" //for esp_app_get_description
 
 // You must set version.txt file to match github version tag x.y.z for LCM4ESP32 to work
+
+int display_idx=0;
 
 static void log_error_if_nonzero(const char *message, int error_code) {
     if (error_code != 0) {
@@ -47,6 +50,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 // 
         msg_id = esp_mqtt_client_subscribe(client, "bus_panel/message", 0);
         UDPLUS("sent subscribe successful, msg_id=%d\n", msg_id);
+        UDPLUS("want to connect to panel %d\n",display_idx);
 // 
 //         msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
 //         UDPLUS("sent subscribe successful, msg_id=%d\n", msg_id);
@@ -90,32 +94,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
+char *broker_uri=NULL;
 static void mqtt_app_start(void) {
     esp_mqtt_client_config_t mqtt_cfg={};
-    char line[128];
-
-    int count = 0;
-    UDPLUS("Please enter url of mqtt broker\n");
-    while (count < 128) {
-        int c = fgetc(stdin);
-        if (c == '\n') {
-            line[count] = '\0';
-            break;
-        } else if (c > 0 && c < 127) {
-            line[count] = c;
-            ++count;
+    if (broker_uri==NULL) {
+        char line[128];
+        int count = 0;
+        UDPLUS("Please enter url of mqtt broker\n");
+        while (count < 128) {
+            int c = fgetc(stdin);
+            if (c == '\n') {
+                line[count] = '\0';
+                break;
+            } else if (c > 0 && c < 127) {
+                line[count] = c;
+                ++count;
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
         }
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        mqtt_cfg.broker.address.uri = line;
+        UDPLUS("Broker url: %s\n", line);
+    } else {
+        mqtt_cfg.broker.address.uri = broker_uri;
     }
-    mqtt_cfg.broker.address.uri = line;
-    UDPLUS("Broker url: %s\n", line);
-
     esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
     /* The last argument may be used to pass data to the event handler, in this example mqtt_event_handler */
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
     esp_mqtt_client_start(client);
 }
-
 
 char    *pinger_target=NULL;
 
@@ -186,10 +192,35 @@ void time_task(void *argv) {
     vTaskDelete(NULL);
 }
 
+char localhost[]="127.0.0.1";
+static void ota_string() {
+    char *display_nr=NULL;
+    esp_err_t status;
+    nvs_handle_t lcm_handle;
+    char *otas=NULL;
+    size_t  size;
+    status = nvs_open("LCM", NVS_READONLY, &lcm_handle);
+    
+    if (!status && nvs_get_str(lcm_handle, "ota_string", NULL, &size) == ESP_OK) {
+        otas = malloc(size);
+        nvs_get_str(lcm_handle, "ota_string", otas, &size);
+        display_nr=strtok(otas,";");
+        broker_uri=strtok(NULL,";");
+        pinger_target=strtok(NULL,";");
+    }
+    if (display_nr==NULL) display_idx=0; else display_idx=atoi(display_nr);
+    if (pinger_target==NULL) pinger_target=localhost;
+    //DO NOT free the otas since it carries the config pieces
+}
+
 void main_task(void *arg) {
     udplog_init(3);
     vTaskDelay(300); //Allow Wi-Fi to connect
-    UDPLUS("\n\nBus-Panel-Driver\n");
+    UDPLUS("\n\nBus-Panel-Driver %s\n",esp_app_get_description()->version);
+
+//     nvs_handle_t lcm_handle;nvs_open("LCM", NVS_READWRITE, &lcm_handle);nvs_set_str(lcm_handle,"ota_string", "3;mqtt://busdisplay:notthesecret@192.168.178.5;192.168.178.5");
+//     nvs_commit(lcm_handle); //can be used if not using LCM
+    ota_string();
 
     mqtt_app_start();
     
@@ -217,7 +248,6 @@ void main_task(void *arg) {
     ESP_ERROR_CHECK(uart_set_pin(uart_num, 13, 14, 12, UART_PIN_NO_CHANGE));
     ESP_ERROR_CHECK(uart_set_mode(uart_num,UART_MODE_RS485_HALF_DUPLEX));
     xTaskCreate(time_task,"Time", 2048, NULL, 6, NULL);
-    pinger_target="192.168.178.5";
     xTaskCreate(ping_task,"PingT",2048, NULL, 1, NULL);
 
     uint8_t payloadC[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00};

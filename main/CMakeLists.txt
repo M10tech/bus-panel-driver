@@ -1,4 +1,4 @@
 idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "."
                     REQUIRES nvs_flash
-                    PRIV_REQUIRES UDPlogger esp_wifi esp_driver_uart mqtt)
+                    PRIV_REQUIRES UDPlogger esp_wifi esp_driver_uart app_update mqtt)

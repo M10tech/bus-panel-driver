@@ -28,3 +28,7 @@ under developement so don't expect stability or anything
 - topic bus_panel/message
 - broker via CLI
 
+### 0.0.4 use ota_string
+- sets mqtt-uri
+- and ping_target
+- and target display
