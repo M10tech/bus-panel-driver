@@ -35,3 +35,7 @@ under developement so don't expect stability or anything
 
 ### 0.0.5 allow cli number input
 - push this to a display message
+
+### 0.0.6 add cli coding input
+- payload[6] will be set with hex input
+- this drives the size and thickness of the font

@@ -257,7 +257,23 @@ void main_task(void *arg) {
     char line[128];
     while (true) {
         int count = 0; line[127]='\0';
-        UDPLUS("Please enter message: \n");
+        UDPLUS("Please enter coding in hex: \n");
+        while (count < 3) {
+            int c = fgetc(stdin);
+            if (c == '\n') {
+                line[count] = '\0';
+                break;
+            } else if (c > 0 && c < 127) {
+                line[count] = c;
+                ++count;
+            }
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+        int coding=0;
+        if (line[0]<0x3a) coding+=((line[0]-0x30)*16); else coding+=((line[0]-0x61+10)*16);
+        if (line[1]<0x3a) coding+=((line[1]-0x30)); else coding+=((line[1]-0x61+10));
+        count = 0;
+        UDPLUS("Please enter message for coding %02x: \n",coding);
         while (count < 128) {
             int c = fgetc(stdin);
             if (c == '\n') {
@@ -272,6 +288,7 @@ void main_task(void *arg) {
         int length=count;
         UDPLUS("Message: %s is %d long\n", line, length);
         payload[2]=strlen(line)+0x20+2;
+        payload[6]=coding;
         for (int i=0; i<length; i++) {
             payload[7+i]=line[i];
         }
