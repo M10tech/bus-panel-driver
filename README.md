@@ -39,3 +39,8 @@ under developement so don't expect stability or anything
 ### 0.0.6 add cli coding input
 - payload[6] will be set with hex input
 - this drives the size and thickness of the font
+
+### 0.0.7 menu based options for display
+- single key menu choice
+- direct ascii to command values
+- targets known sequences

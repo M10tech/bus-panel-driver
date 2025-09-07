@@ -254,49 +254,129 @@ void main_task(void *arg) {
     payload_random_test[sizeof(payload_random_test)-1]=checksum(payload_random_test,sizeof(payload_random_test)-1);
     uart_write_bytes(uart_num,payload_random_test,sizeof(payload_random_test));
     uint8_t payload[32]={0x02,0x05,0x00,0x33,0x31,0x0d,0x58,0x00};
-    char line[128];
+    int count=0,size=0;
+    int menu=0, font1=0x58, font2=0x58, type=0x31, addr=0x33;
+    int length1=0, length2=0;
+    char line[128], txt1[64], txt2[64];
+    txt1[0]='\0', txt2[0]='\0';
     while (true) {
-        int count = 0; line[127]='\0';
-        UDPLUS("Please enter coding in hex: \n");
-        while (count < 3) {
-            int c = fgetc(stdin);
-            if (c == '\n') {
-                line[count] = '\0';
-                break;
-            } else if (c > 0 && c < 127) {
-                line[count] = c;
-                ++count;
-            }
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+        line[127]='\0', txt1[63]='\0', txt2[63]='\0';
+        UDPLUS("Menu:\n0=execute\n1=txt1 = %s\n2=txt2 = %s\n3=type = %02x\n4=font1 = %02x\n5=font2 = %02x\n6=address = %02x\n", \
+        txt1,txt2,type,font1,font2,addr);
+        while ((menu = fgetc(stdin))==EOF) vTaskDelay(1);
+        switch (menu) {
+            case 0x31: { //txt1
+                count=0;
+                UDPLUS("1\nPlease enter type %02x message1 for %02x with font1 %02x: \n",type,addr,font1);
+                while (count < 128) {
+                    int c = fgetc(stdin);
+                    if (c == '\n') {
+                        line[count] = '\0';
+                        break;
+                    } else if (c > 0 && c < 127) {
+                        line[count] = c;
+                        ++count;
+                    }
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                }
+                strcpy(txt1,line);
+            } break;
+            case 0x32: { //txt2
+                count=0;
+                UDPLUS("2\nPlease enter type %02x message2 for %02x with font2 %02x: \n",type,addr,font2);
+                while (count < 128) {
+                    int c = fgetc(stdin);
+                    if (c == '\n') {
+                        line[count] = '\0';
+                        break;
+                    } else if (c > 0 && c < 127) {
+                        line[count] = c;
+                        ++count;
+                    }
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                }
+                strcpy(txt2,line);
+            } break;
+            case 0x33: { //type
+                UDPLUS("3\nPlease enter type code: \n");
+                while ((type = fgetc(stdin))==EOF) vTaskDelay(1);
+            } break;
+            case 0x34: { //font
+                UDPLUS("4\nPlease enter font1 code: \n");
+                while ((font1 = fgetc(stdin))==EOF) vTaskDelay(1);
+            } break;
+            case 0x35: { //font
+                UDPLUS("5\nPlease enter font2 code: \n");
+                while ((font2 = fgetc(stdin))==EOF) vTaskDelay(1);
+            } break;
+            case 0x36: { //address
+                UDPLUS("6\nPlease enter addres code: \n");
+                while ((addr = fgetc(stdin))==EOF) vTaskDelay(1);
+            } break;
+            case 0x30: { //execute
+                payload[3]=addr; payload[4]=type;
+                switch (type) {
+                    case 0x30: {
+                        payload[2]=0x20; payload[6]=0x02; payload[7]=0x03;
+                        payload[8]=checksum(payload,8);
+                        size=9;
+                    } break;
+                    case 0x31: {
+                        length1=strlen(txt1);
+                        UDPLUS("0\nMessage1: %s is %d long\n", txt1, length1);
+                        payload[2]=length1+0x20+2;
+                        payload[6]=font1;
+                        for (int i=0; i<length1; i++) {
+                            payload[7+i]=txt1[i];
+                        }
+                        payload[7+length1]=0x0d; payload[8+length1]=0x02; payload[9+length1]=0x03;
+                        payload[10+length1]=checksum(payload,10+length1);
+                        size=11+length1;
+                    } break;
+                    case 0x32: case 0x34: {
+                        length1=strlen(txt1);
+                        length2=strlen(txt2);
+                        UDPLUS("0\nMessage1: %s is %d long and Message2: %s is %d long\n", txt1, length1, txt2, length2);
+                        payload[2]=length1+length2+0x20+4;
+                        payload[6]=font1;
+                        for (int i=0; i<length1; i++) {
+                            payload[7+i]=txt1[i];
+                        }
+                        payload[7+length1]=0x0d;
+                        payload[8+length1]=font2;
+                        for (int i=0; i<length2; i++) {
+                            payload[9+length1+i]=txt2[i];
+                        }
+                        payload[9+length1+length2]=0x0d;
+                        payload[10+length1+length2]=0x02; payload[11+length1+length2]=0x03;
+                        payload[12+length1+length2]=checksum(payload,12+length1+length2);
+                        size=13+length1+length2;
+                    } break;
+                    case 0x33: {
+                    } break;
+                    case 0x53: {
+                    } break;
+                    case 0x54: case 0x56:{
+                        length1=strlen(txt1);
+                        UDPLUS("0\nKey value: %s\n", txt1);
+                        payload[2]=length1+0x20+1;
+                        for (int i=0; i<length1; i++) {
+                            payload[6+i]=txt1[i];
+                        }
+                        payload[6+length1]=0x0d; payload[7+length1]=0x02; payload[8+length1]=0x03;
+                        payload[9+length1]=checksum(payload,9+length1);
+                        size=10+length1;
+                    } break;
+                    default:
+                    UDPLUS("unknown type choice\n");
+                }
+                for (int i=0; i<size; i++) UDPLUS("%02x ",payload[i]);
+                UDPLUS("\n");
+                uart_write_bytes(uart_num,payload,size);
+            } break;
+            default:
+            UDPLUS("bad menu choice\n");
         }
-        int coding=0;
-        if (line[0]<0x3a) coding+=((line[0]-0x30)*16); else coding+=((line[0]-0x61+10)*16);
-        if (line[1]<0x3a) coding+=((line[1]-0x30)); else coding+=((line[1]-0x61+10));
-        count = 0;
-        UDPLUS("Please enter message for coding %02x: \n",coding);
-        while (count < 128) {
-            int c = fgetc(stdin);
-            if (c == '\n') {
-                line[count] = '\0';
-                break;
-            } else if (c > 0 && c < 127) {
-                line[count] = c;
-                ++count;
-            }
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-        }
-        int length=count;
-        UDPLUS("Message: %s is %d long\n", line, length);
-        payload[2]=strlen(line)+0x20+2;
-        payload[6]=coding;
-        for (int i=0; i<length; i++) {
-            payload[7+i]=line[i];
-        }
-        payload[7+length]=0x0d; payload[8+length]=0x02; payload[9+length]=0x03;
-        payload[10+length]=checksum(payload,10+length);
-        for (int i=0; i<32; i++) UDPLUS("%02x ",payload[i]);
-        UDPLUS("\n");
-        uart_write_bytes(uart_num,payload,11+length);
     }
 }    
 
