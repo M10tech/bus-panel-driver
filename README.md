@@ -7,14 +7,35 @@ Details on https://github.com/HomeACcessoryKid/LCM4ESP32
 and instructions how to deploy here  
 https://github.com/HomeACcessoryKid/LCM4ESP32/blob/main/deploy.md  
 
-under developement so don't expect stability or anything
+Also read the WIKI to get background info on the hardware needed and the priciples involved.
 
 ## Version History
 
-### Initial commit
+### 0.9.0 also configure via MQTT
+- topic=bus_panel/message
+- input by json format
+- code cleanup and inline comments
 
-### 0.0.1 "proof of concept"
-- can replicate some basic commands
+### 0.0.7 menu based options for display
+- single key menu choice
+- direct ascii to command values
+- targets known sequences
+
+### 0.0.6 add cli coding input
+- payload[6] will be set with hex input
+- this drives the size and thickness of the font
+
+### 0.0.5 allow cli number input
+- push this to a display message
+
+### 0.0.4 use ota_string
+- sets mqtt-uri
+- and ping_target
+- and target display
+
+### 0.0.3 introduce MQTT subscriber
+- topic bus_panel/message
+- broker via CLI
 
 ### 0.0.2 moved to UART driver, not I2S
 - turns out to be sufficient for this purpose
@@ -24,23 +45,7 @@ under developement so don't expect stability or anything
 - add checksum function
 - inherits LCM4ESP32, UDPlogger, pinger, SNTP
 
-### 0.0.3 introduce MQTT subscriber
-- topic bus_panel/message
-- broker via CLI
+### 0.0.1 "proof of concept"
+- can replicate some basic commands
 
-### 0.0.4 use ota_string
-- sets mqtt-uri
-- and ping_target
-- and target display
-
-### 0.0.5 allow cli number input
-- push this to a display message
-
-### 0.0.6 add cli coding input
-- payload[6] will be set with hex input
-- this drives the size and thickness of the font
-
-### 0.0.7 menu based options for display
-- single key menu choice
-- direct ascii to command values
-- targets known sequences
+### Initial commit

@@ -17,66 +17,77 @@
 #include "hal/wdt_hal.h"
 #include "mqtt_client.h"
 #include "esp_ota_ops.h" //for esp_app_get_description
+#include <cJSON.h>
 
 // You must set version.txt file to match github version tag x.y.z for LCM4ESP32 to work
 
 int display_idx=0;
+char txt1[64],   txt2[64];
+int font1=0x58, font2=0x58, layout=0x31, addr=0x33;
+int mqtt_order=0;
 
-static void log_error_if_nonzero(const char *message, int error_code) {
-    if (error_code != 0) {
-        UDPLUS("Last error %s: 0x%x\n", message, error_code);
-    }
-}
-/*
- * @brief Event handler registered to receive MQTT events
- *
- *  This function is called by the MQTT client event loop.
- *
- * @param handler_args user data registered to the event.
- * @param base Event base for the handler(always MQTT Base in this example).
- * @param event_id The id for the received event.
- * @param event_data The data for the event, esp_mqtt_event_handle_t.
- */
+static void log_error_if_nonzero(const char *message, int error_code) {if (error_code != 0) UDPLUS("Last error %s: 0x%x\n", message, error_code);}
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
 //     UDPLUS("Event dispatched from event loop base=%s, event_id=%lx\n", base, event_id);
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
+    const cJSON *json_txt1=NULL,*json_txt2=NULL,*json_font1=NULL,*json_font2=NULL,*json_type=NULL,*json_addr=NULL;
     int msg_id;
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
         UDPLUS("MQTT_EVENT_CONNECTED\n");
-//         msg_id = esp_mqtt_client_publish(client, "/topic/qos1", "data_3", 0, 1, 0);
-//         UDPLUS("sent publish successful, msg_id=%d\n", msg_id);
-// 
         msg_id = esp_mqtt_client_subscribe(client, "bus_panel/message", 0);
         UDPLUS("sent subscribe successful, msg_id=%d\n", msg_id);
-        UDPLUS("want to connect to panel %d\n",display_idx);
-// 
-//         msg_id = esp_mqtt_client_subscribe(client, "/topic/qos1", 1);
-//         UDPLUS("sent subscribe successful, msg_id=%d\n", msg_id);
-// 
-//         msg_id = esp_mqtt_client_unsubscribe(client, "/topic/qos1");
-//         UDPLUS("sent unsubscribe successful, msg_id=%d\n", msg_id);
         break;
     case MQTT_EVENT_DISCONNECTED:
         UDPLUS("MQTT_EVENT_DISCONNECTED\n");
         break;
-
     case MQTT_EVENT_SUBSCRIBED:
         UDPLUS("MQTT_EVENT_SUBSCRIBED, msg_id=%d\n", event->msg_id);
-//         msg_id = esp_mqtt_client_publish(client, "/topic/qos0", "data", 0, 0, 0);
-//         UDPLUS("sent publish successful, msg_id=%d\n", msg_id);
-        break;
-    case MQTT_EVENT_UNSUBSCRIBED:
-        UDPLUS("MQTT_EVENT_UNSUBSCRIBED, msg_id=%d\n", event->msg_id);
-        break;
-    case MQTT_EVENT_PUBLISHED:
-        UDPLUS("MQTT_EVENT_PUBLISHED, msg_id=%d\n", event->msg_id);
         break;
     case MQTT_EVENT_DATA:
-        UDPLUS( "MQTT_EVENT_DATA\n");
-        UDPLUS("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-        UDPLUS("DATA=%.*s\r\n", event->data_len, event->data);
+        //UDPLUS( "MQTT_EVENT_DATA\n");
+        UDPLUS("TOPIC=%.*s DATA=\n", event->topic_len, event->topic);
+        UDPLUS("%.*s\n", event->data_len, event->data);
+        cJSON *json = cJSON_ParseWithLength(event->data, event->data_len);
+        if (json) {
+//             char *myJson = cJSON_Print(json);
+//             UDPLUS("JSON: %s\n",myJson);
+//             free(myJson);
+            json_txt1 = cJSON_GetObjectItemCaseSensitive(json, "txt1");
+            if (cJSON_IsString(json_txt1) && (json_txt1->valuestring != NULL)) {
+                UDPLUS("Text 1 is \"%s\"\n", json_txt1->valuestring);
+                strcpy(txt1,json_txt1->valuestring);
+            }
+            json_txt2 = cJSON_GetObjectItemCaseSensitive(json, "txt2");
+            if (cJSON_IsString(json_txt2) && (json_txt2->valuestring != NULL)) {
+                UDPLUS("Text 2 is \"%s\"\n", json_txt2->valuestring);
+                strcpy(txt2,json_txt2->valuestring);
+            }
+            json_font1 = cJSON_GetObjectItemCaseSensitive(json, "font1");
+            if (cJSON_IsNumber(json_font1)) {
+                UDPLUS("Font 1 is \"0x%02x\"\n", json_font1->valueint);
+                font1=json_font1->valueint;
+            }
+            json_font2 = cJSON_GetObjectItemCaseSensitive(json, "font2");
+            if (cJSON_IsNumber(json_font2)) {
+                UDPLUS("Font 2 is \"0x%02x\"\n", json_font2->valueint);
+                font2=json_font2->valueint;
+            }
+            json_type = cJSON_GetObjectItemCaseSensitive(json, "layout");
+            if (cJSON_IsNumber(json_type)) {
+                UDPLUS("Layout is \"0x%02x\"\n", json_type->valueint);
+                layout=json_type->valueint;
+            }
+            json_addr = cJSON_GetObjectItemCaseSensitive(json, "addr");
+            if (cJSON_IsNumber(json_addr)) {
+                UDPLUS("Address = \"0x%02x\"\n", json_addr->valueint);
+                addr=json_addr->valueint;
+            }
+            cJSON_Delete(json);
+            mqtt_order=1;
+        } else {
+        }
         break;
     case MQTT_EVENT_ERROR:
         UDPLUS("MQTT_EVENT_ERROR\n");
@@ -124,12 +135,6 @@ static void mqtt_app_start(void) {
 }
 
 char    *pinger_target=NULL;
-
-uint8_t checksum(uint8_t *payload, size_t len) {
-    uint8_t cs=0;
-    for(int i = 0; i < len; i++) cs ^= payload[i];
-    return cs;
-}
 
 wdt_hal_context_t rtc_wdt_ctx = RWDT_HAL_CONTEXT_DEFAULT(); //RTC WatchDogTimer context
 int ping_count=60,ping_delay=1; //seconds
@@ -213,6 +218,13 @@ static void ota_string() {
     //DO NOT free the otas since it carries the config pieces
 }
 
+
+uint8_t checksum(uint8_t *payload, size_t len) {
+    uint8_t cs=0;
+    for(int i = 0; i < len; i++) cs ^= payload[i];
+    return cs;
+}
+
 void main_task(void *arg) {
     udplog_init(3);
     vTaskDelay(300); //Allow Wi-Fi to connect
@@ -222,8 +234,6 @@ void main_task(void *arg) {
 //     nvs_commit(lcm_handle); //can be used if not using LCM
     ota_string();
 
-    mqtt_app_start();
-    
     const uart_port_t uart_num = UART_NUM_1;
     const int uart_buffer_size = (1024 * 2);        // RX               TX
     ESP_ERROR_CHECK(uart_driver_install(uart_num, uart_buffer_size, uart_buffer_size, 20, NULL, 0));
@@ -250,24 +260,27 @@ void main_task(void *arg) {
     xTaskCreate(time_task,"Time", 2048, NULL, 6, NULL);
     xTaskCreate(ping_task,"PingT",2048, NULL, 1, NULL);
 
-    uint8_t payload_random_test[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00};
+    mqtt_app_start();
+
+    uint8_t payload_random_test[]={0x02,0x05,0x23,0x46,0x54,0x0d,0x31,0x39,0x0d,0x02,0x03,0x00}; //init message
     payload_random_test[sizeof(payload_random_test)-1]=checksum(payload_random_test,sizeof(payload_random_test)-1);
     uart_write_bytes(uart_num,payload_random_test,sizeof(payload_random_test));
+
     uint8_t payload[32]={0x02,0x05,0x00,0x33,0x31,0x0d,0x58,0x00};
-    int count=0,size=0;
-    int menu=0, font1=0x58, font2=0x58, type=0x31, addr=0x33;
+    int count=0,size=0,menu=0;
     int length1=0, length2=0;
-    char line[128], txt1[64], txt2[64];
+    char line[128];
     txt1[0]='\0', txt2[0]='\0';
     while (true) {
         line[127]='\0', txt1[63]='\0', txt2[63]='\0';
-        UDPLUS("Menu:\n0=execute\n1=txt1 = %s\n2=txt2 = %s\n3=type = %02x\n4=font1 = %02x\n5=font2 = %02x\n6=address = %02x\n", \
-        txt1,txt2,type,font1,font2,addr);
-        while ((menu = fgetc(stdin))==EOF) vTaskDelay(1);
+        UDPLUS("Menu:\n0=write\n1=txt1 = \"%s\"\n2=txt2 = \"%s\"\n3=layout=\"0x%02x\"\n4=font1= \"0x%02x\"\n5=font2= \"0x%02x\"\n6=addr = \"0x%02x\"\n", \
+        txt1,txt2,layout,font1,font2,addr);
+        while ((menu = fgetc(stdin))==EOF && mqtt_order==0) vTaskDelay(1);
+        if (mqtt_order) {mqtt_order=0; menu=0x30;} //write
         switch (menu) {
             case 0x31: { //txt1
                 count=0;
-                UDPLUS("1\nPlease enter type %02x message1 for %02x with font1 %02x: \n",type,addr,font1);
+                UDPLUS("1\nPlease enter message txt1: \n");
                 while (count < 128) {
                     int c = fgetc(stdin);
                     if (c == '\n') {
@@ -283,7 +296,7 @@ void main_task(void *arg) {
             } break;
             case 0x32: { //txt2
                 count=0;
-                UDPLUS("2\nPlease enter type %02x message2 for %02x with font2 %02x: \n",type,addr,font2);
+                UDPLUS("2\nPlease enter message txt2: \n");
                 while (count < 128) {
                     int c = fgetc(stdin);
                     if (c == '\n') {
@@ -297,9 +310,9 @@ void main_task(void *arg) {
                 }
                 strcpy(txt2,line);
             } break;
-            case 0x33: { //type
-                UDPLUS("3\nPlease enter type code: \n");
-                while ((type = fgetc(stdin))==EOF) vTaskDelay(1);
+            case 0x33: { //layout
+                UDPLUS("3\nPlease enter layout code: \n");
+                while ((layout = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
             case 0x34: { //font
                 UDPLUS("4\nPlease enter font1 code: \n");
@@ -313,17 +326,17 @@ void main_task(void *arg) {
                 UDPLUS("6\nPlease enter addres code: \n");
                 while ((addr = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
-            case 0x30: { //execute
-                payload[3]=addr; payload[4]=type;
-                switch (type) {
-                    case 0x30: {
+            case 0x30: { //write
+                payload[3]=addr; payload[4]=layout;
+                switch (layout) {
+                    case 0x30: { //no message = '0'
                         payload[2]=0x20; payload[6]=0x02; payload[7]=0x03;
                         payload[8]=checksum(payload,8);
                         size=9;
                     } break;
-                    case 0x31: {
+                    case 0x31: { //1 message = '1'
                         length1=strlen(txt1);
-                        UDPLUS("0\nMessage1: %s is %d long\n", txt1, length1);
+                        UDPLUS("0\nMessage1: \"%s\"(%d)\n", txt1, length1);
                         payload[2]=length1+0x20+2;
                         payload[6]=font1;
                         for (int i=0; i<length1; i++) {
@@ -333,10 +346,10 @@ void main_task(void *arg) {
                         payload[10+length1]=checksum(payload,10+length1);
                         size=11+length1;
                     } break;
-                    case 0x32: case 0x34: {
+                    case 0x32: case 0x34: { //2 messages, 0x32='2'=in-line, 0x34='4'=above one another
                         length1=strlen(txt1);
                         length2=strlen(txt2);
-                        UDPLUS("0\nMessage1: %s is %d long and Message2: %s is %d long\n", txt1, length1, txt2, length2);
+                        UDPLUS("0\nMessage1: \"%s\"(%d) + Message2: \"%s\"(%d)\n", txt1, length1, txt2, length2);
                         payload[2]=length1+length2+0x20+4;
                         payload[6]=font1;
                         for (int i=0; i<length1; i++) {
@@ -352,11 +365,9 @@ void main_task(void *arg) {
                         payload[12+length1+length2]=checksum(payload,12+length1+length2);
                         size=13+length1+length2;
                     } break;
-                    case 0x33: {
+                    case 0x53: { //'S'=status request  //doesn't do anything, right?
                     } break;
-                    case 0x53: {
-                    } break;
-                    case 0x54: case 0x56:{
+                    case 0x54: case 0x56:{ //0x54='T'=test mode(2x), 0x56='V'=level(1x)
                         length1=strlen(txt1);
                         UDPLUS("0\nKey value: %s\n", txt1);
                         payload[2]=length1+0x20+1;
@@ -368,14 +379,14 @@ void main_task(void *arg) {
                         size=10+length1;
                     } break;
                     default:
-                    UDPLUS("unknown type choice\n");
+                    UDPLUS("Unknown layout choice\n");
                 }
                 for (int i=0; i<size; i++) UDPLUS("%02x ",payload[i]);
                 UDPLUS("\n");
                 uart_write_bytes(uart_num,payload,size);
             } break;
             default:
-            UDPLUS("bad menu choice\n");
+            UDPLUS("Unknown menu choice\n");
         }
     }
 }    
