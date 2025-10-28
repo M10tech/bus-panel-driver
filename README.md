@@ -11,6 +11,10 @@ Also read the WIKI to get background info on the hardware needed and the pricipl
 
 ## Version History
 
+### 0.9.1 4800 baud and layout 0x35
+- when switching dipswitches 4 and 5 next to the RAM, 4800 baud is used
+- layout 0x35 is one in front full size, then two behind, above one another
+
 ### 0.9.0 also configure via MQTT
 - topic=bus_panel/message
 - input by json format

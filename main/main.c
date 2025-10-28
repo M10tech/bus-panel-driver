@@ -22,8 +22,8 @@
 // You must set version.txt file to match github version tag x.y.z for LCM4ESP32 to work
 
 int display_idx=0;
-char txt1[64],   txt2[64];
-int font1=0x58, font2=0x58, layout=0x31, addr=0x33;
+char txt1[128],   txt2[128],   txt3[128];
+int font1=0x58, font2=0x46, font3=0x46, layout=0x31, addr=0x33;
 int mqtt_order=0;
 
 static void log_error_if_nonzero(const char *message, int error_code) {if (error_code != 0) UDPLUS("Last error %s: 0x%x\n", message, error_code);}
@@ -31,7 +31,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 //     UDPLUS("Event dispatched from event loop base=%s, event_id=%lx\n", base, event_id);
     esp_mqtt_event_handle_t event = event_data;
     esp_mqtt_client_handle_t client = event->client;
-    const cJSON *json_txt1=NULL,*json_txt2=NULL,*json_font1=NULL,*json_font2=NULL,*json_type=NULL,*json_addr=NULL;
+    const cJSON *json_txt1=NULL,*json_txt2=NULL,*json_txt3=NULL,*json_font1=NULL,*json_font2=NULL,*json_font3=NULL,*json_layout=NULL,*json_addr=NULL;
     int msg_id;
     switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
@@ -64,6 +64,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 UDPLUS("Text 2 is \"%s\"\n", json_txt2->valuestring);
                 strcpy(txt2,json_txt2->valuestring);
             }
+            json_txt3 = cJSON_GetObjectItemCaseSensitive(json, "txt3");
+            if (cJSON_IsString(json_txt3) && (json_txt3->valuestring != NULL)) {
+                UDPLUS("Text 3 is \"%s\"\n", json_txt3->valuestring);
+                strcpy(txt3,json_txt3->valuestring);
+            }
             json_font1 = cJSON_GetObjectItemCaseSensitive(json, "font1");
             if (cJSON_IsNumber(json_font1)) {
                 UDPLUS("Font 1 is \"0x%02x\"\n", json_font1->valueint);
@@ -74,10 +79,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 UDPLUS("Font 2 is \"0x%02x\"\n", json_font2->valueint);
                 font2=json_font2->valueint;
             }
-            json_type = cJSON_GetObjectItemCaseSensitive(json, "layout");
-            if (cJSON_IsNumber(json_type)) {
-                UDPLUS("Layout is \"0x%02x\"\n", json_type->valueint);
-                layout=json_type->valueint;
+            json_font3 = cJSON_GetObjectItemCaseSensitive(json, "font3");
+            if (cJSON_IsNumber(json_font3)) {
+                UDPLUS("Font 3 is \"0x%02x\"\n", json_font3->valueint);
+                font3=json_font3->valueint;
+            }
+            json_layout = cJSON_GetObjectItemCaseSensitive(json, "layout");
+            if (cJSON_IsNumber(json_layout)) {
+                UDPLUS("Layout is \"0x%02x\"\n", json_layout->valueint);
+                layout=json_layout->valueint;
             }
             json_addr = cJSON_GetObjectItemCaseSensitive(json, "addr");
             if (cJSON_IsNumber(json_addr)) {
@@ -112,7 +122,7 @@ static void mqtt_app_start(void) {
         char line[128];
         int count = 0;
         UDPLUS("Please enter url of mqtt broker\n");
-        while (count < 128) {
+        while (count < 127) {
             int c = fgetc(stdin);
             if (c == '\n') {
                 line[count] = '\0';
@@ -238,7 +248,7 @@ void main_task(void *arg) {
     const int uart_buffer_size = (1024 * 2);        // RX               TX
     ESP_ERROR_CHECK(uart_driver_install(uart_num, uart_buffer_size, uart_buffer_size, 20, NULL, 0));
     uart_config_t uart_config = {
-        .baud_rate = 600,
+        .baud_rate = 4800,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_EVEN,
         .stop_bits = UART_STOP_BITS_1,
@@ -266,22 +276,22 @@ void main_task(void *arg) {
     payload_random_test[sizeof(payload_random_test)-1]=checksum(payload_random_test,sizeof(payload_random_test)-1);
     uart_write_bytes(uart_num,payload_random_test,sizeof(payload_random_test));
 
-    uint8_t payload[32]={0x02,0x05,0x00,0x33,0x31,0x0d,0x58,0x00};
+    uint8_t payload[512]={0x02,0x05,0x00,0x00,0x00,0x0d}; //payload [0], [1] and [5] never get changed
     int count=0,size=0,menu=0;
-    int length1=0, length2=0;
+    int length1=0, length2=0, length3=0;
     char line[128];
-    txt1[0]='\0', txt2[0]='\0';
+    txt1[0]='\0', txt2[0]='\0', txt3[0]='\0';
     while (true) {
-        line[127]='\0', txt1[63]='\0', txt2[63]='\0';
-        UDPLUS("Menu:\n0=write\n1=txt1 = \"%s\"\n2=txt2 = \"%s\"\n3=layout=\"0x%02x\"\n4=font1= \"0x%02x\"\n5=font2= \"0x%02x\"\n6=addr = \"0x%02x\"\n", \
-        txt1,txt2,layout,font1,font2,addr);
+        line[127]='\0', txt1[127]='\0', txt2[127]='\0', txt3[127]='\0';
+        UDPLUS("Menu:\n0=write\n1=txt1 = \"%s\"\n2=txt2 = \"%s\"\n3=txt3 = \"%s\"\n4=layout=\"0x%02x\"\n5=font1= \"0x%02x\"\n6=font2= \"0x%02x\"\n7=font3= \"0x%02x\"\n8=addr = \"0x%02x\"\n", \
+        txt1,txt2,txt3,layout,font1,font2,font3,addr);
         while ((menu = fgetc(stdin))==EOF && mqtt_order==0) vTaskDelay(1);
         if (mqtt_order) {mqtt_order=0; menu=0x30;} //write
         switch (menu) {
             case 0x31: { //txt1
                 count=0;
                 UDPLUS("1\nPlease enter message txt1: \n");
-                while (count < 128) {
+                while (count < 127) {
                     int c = fgetc(stdin);
                     if (c == '\n') {
                         line[count] = '\0';
@@ -297,7 +307,7 @@ void main_task(void *arg) {
             case 0x32: { //txt2
                 count=0;
                 UDPLUS("2\nPlease enter message txt2: \n");
-                while (count < 128) {
+                while (count < 127) {
                     int c = fgetc(stdin);
                     if (c == '\n') {
                         line[count] = '\0';
@@ -310,20 +320,40 @@ void main_task(void *arg) {
                 }
                 strcpy(txt2,line);
             } break;
-            case 0x33: { //layout
-                UDPLUS("3\nPlease enter layout code: \n");
+            case 0x33: { //txt3
+                count=0;
+                UDPLUS("3\nPlease enter message txt3: \n");
+                while (count < 127) {
+                    int c = fgetc(stdin);
+                    if (c == '\n') {
+                        line[count] = '\0';
+                        break;
+                    } else if (c > 0 && c < 127) {
+                        line[count] = c;
+                        ++count;
+                    }
+                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                }
+                strcpy(txt3,line);
+            } break;
+            case 0x34: { //layout
+                UDPLUS("4\nPlease enter layout code: \n");
                 while ((layout = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
-            case 0x34: { //font
-                UDPLUS("4\nPlease enter font1 code: \n");
+            case 0x35: { //font1
+                UDPLUS("5\nPlease enter font1 code: \n");
                 while ((font1 = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
-            case 0x35: { //font
-                UDPLUS("5\nPlease enter font2 code: \n");
+            case 0x36: { //font2
+                UDPLUS("6\nPlease enter font2 code: \n");
                 while ((font2 = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
-            case 0x36: { //address
-                UDPLUS("6\nPlease enter addres code: \n");
+            case 0x37: { //font3
+                UDPLUS("7\nPlease enter font3 code: \n");
+                while ((font3 = fgetc(stdin))==EOF) vTaskDelay(1);
+            } break;
+            case 0x38: { //address
+                UDPLUS("8\nPlease enter addres code: \n");
                 while ((addr = fgetc(stdin))==EOF) vTaskDelay(1);
             } break;
             case 0x30: { //write
@@ -364,6 +394,31 @@ void main_task(void *arg) {
                         payload[10+length1+length2]=0x02; payload[11+length1+length2]=0x03;
                         payload[12+length1+length2]=checksum(payload,12+length1+length2);
                         size=13+length1+length2;
+                    } break;
+                    case 0x35: { //3 messages, 0x35='5'=one in front full size, then two behind, above one another
+                        length1=strlen(txt1);
+                        length2=strlen(txt2);
+                        length3=strlen(txt3);
+                        UDPLUS("0\nMessage1: \"%s\"(%d) + Message2: \"%s\"(%d) + Message3: \"%s\"(%d)\n", txt1, length1, txt2, length2, txt3, length3);
+                        payload[2]=length1+length2+length3+0x20+6;
+                        payload[6]=font1;
+                        for (int i=0; i<length1; i++) {
+                            payload[7+i]=txt1[i];
+                        }
+                        payload[7+length1]=0x0d;
+                        payload[8+length1]=font2;
+                        for (int i=0; i<length2; i++) {
+                            payload[9+length1+i]=txt2[i];
+                        }
+                        payload[9+length1+length2]=0x0d;
+                        payload[10+length1+length2]=font3;
+                        for (int i=0; i<length3; i++) {
+                            payload[11+length1+length2+i]=txt3[i];
+                        }
+                        payload[11+length1+length2+length3]=0x0d;
+                        payload[12+length1+length2+length3]=0x02; payload[13+length1+length2+length3]=0x03;
+                        payload[14+length1+length2+length3]=checksum(payload,14+length1+length2+length3);
+                        size=15+length1+length2+length3;
                     } break;
                     case 0x53: { //'S'=status request  //doesn't do anything, right?
                     } break;
